@@ -1,0 +1,186 @@
+#-------------------------------------------------------------------------------
+# Name:        Agisoft autonomus process
+# Purpose:      Make all process from Workflow menu to only one process  (linux version)
+#
+# Author:      Miguel Blanco
+#
+# Created:     29/10/2015
+# Copyright:   (c) Pro Drones Canada Inc 2015
+# Licence:     <Pro Drones Canada Inc>
+#-------------------------------------------------------------------------------
+
+import os
+import PhotoScan
+from PySide import QtGui, QtCore
+from datetime import datetime
+
+startTime = datetime.now()
+print ("Start script at....")
+print (startTime)
+
+
+#  def main():
+
+
+global doc
+doc = PhotoScan.app.document
+
+#  doc.open("projectMiguel.psz")
+
+#app = QtGui.QApplication.instance()  # voir pourquoi ne fonctione pas
+#parent = app.activeWindow()  # voir pourquoi ne fonctione pas
+
+#prompting for path to photos
+path_photos = PhotoScan.app.getExistingDirectory("http://www.avyon.com         --      Specify input photo folder:")
+# path_export = PhotoScan.app.getExistingDirectory("http://www.avyon.com         --      Specify EXPORT folder:")
+path_export = "/mnt/data/done"
+
+save =doc.save(path_export + "/Photoscan.PSX")
+save
+
+doc.open(path_export + "/Photoscan.PSX")
+
+# Processing parameters
+
+# 1- Aling photos
+accuracy = PhotoScan.Accuracy.%s  #  [HighestAccuracy, HighAccuracy, MediumAccuracy, LowAccuracy, LowestAccuracy]
+preselection = PhotoScan.Preselection.%s  # Disabled / Generic / Reference
+keypoints = 40000 # align photos key point limit
+tiepoints = 10000 # align photos tie point limit
+
+#  2- Built dense cloud
+quality = PhotoScan.Quality.%s #   [UltraQuality, HighQuality, MediumQuality, LowQuality, LowestQuality]
+filtering = PhotoScan.FilterMode.%s #  [AggressiveFiltering, ModerateFiltering, MildFiltering, NoFiltering]
+
+# 3- Built Mesh
+surface = PhotoScan.SurfaceType.%s # [Arbitrary, HeightField]
+
+# source = PhotoScan.PointsSource.DensePoints # build mesh source  ////  Eiminate from 1.2.0 ///
+
+face_num = PhotoScan.FaceCount.%s # [HighFaceCount, MediumFaceCount, LowFaceCount]
+
+interpolation = PhotoScan.Interpolation.%s #  [EnabledInterpolation, DisabledInterpolation, Extrapolated]
+
+# 4- Built Texture
+mapping = PhotoScan.MappingMode.%s #  [GenericMapping, OrthophotoMapping, AdaptiveOrthophotoMapping, SphericalMapping, CameraMapping]
+
+blending = PhotoScan.BlendingMode.%s # [AverageBlending, MosaicBlending, MinBlending, MaxBlending, DisabledBlending]
+
+atlas_size = 4096  # 8192
+color_corr = False
+
+
+print("Script started")
+
+# Creating new chunk
+doc.addChunk()
+chunk = doc.chunks[-1]
+chunk.label = "New Chunk by Avyon.com"
+
+#loading images
+image_list = os.listdir(path_photos)
+photo_list = list()
+for photo in image_list:
+	if ("jpg" or "jpeg" or "JPG" or "JPEG") in photo.lower():
+		photo_list.append(path_photos + "/" + photo) #  "\\"
+chunk.addPhotos(photo_list)
+
+# Process 1.  Align photos
+chunk.matchPhotos(accuracy = accuracy, preselection = preselection, filter_mask = False, keypoint_limit = keypoints, tiepoint_limit = tiepoints)
+chunk.alignCameras()
+
+#  Process 2.  Optimize alignment
+#chunk.optimizeCameras()
+print ("optimise cameras initialisation...")
+chunk.optimizeCameras(fit_f=True, fit_cxcy=True, fit_aspect=True, fit_skew=True, fit_k1k2k3=True,
+fit_p1p2=True, fit_k4=False)
+print ("optimise cameras finish...")
+print ("--------------------------")
+print ("Building dense cloud")
+
+
+#building dense cloud
+PhotoScan.app.gpu_mask = 1  #GPU devices binary mask
+PhotoScan.app.cpu_cores_inactive = 2  #CPU cores inactive
+chunk.buildDenseCloud(quality = quality, filter = filtering)
+
+#building mesh
+chunk.buildModel(surface = surface,  interpolation = interpolation, face_count = face_num)  # source = source,
+
+#build texture
+chunk.buildUV(mapping = mapping, count = 1)
+chunk.buildTexture(blending = blending , color_correction = color_corr, size = atlas_size)
+
+doc.save()
+
+print ("Save the document " + str(save))
+
+PhotoScan.app.update()
+
+#export
+
+#  New ####
+
+#  build dem, ortho  (avant is necesaire souvegarder en psx format dans le manual processus)
+
+
+
+
+print ("now start the builDEM part")
+
+SourceClud = PhotoScan.DataSource.PointCloudData   #, DenseCloudData, ModelData, ElevationData]
+
+interpolEnable = PhotoScan.EnabledInterpolation
+
+chunk.buildDem(source=SourceClud, interpolation=interpolEnable)   # [, projection ][, region ][, classes ]
+
+print ("now start the buildOrthomosaic part")
+
+surfaDem = PhotoScan.DataSource.ElevationData    #ModelData
+mosaiBlend = PhotoScan.BlendingMode.MosaicBlending
+
+chunk.buildOrthomosaic(surface=surfaDem, blending=mosaiBlend) # color_correction=False[, projection ][, region ][, dx ][, dy ])
+
+
+print ("Finish to generate the othomosaic and Dem")
+
+print ("Now we start the export function")
+
+#  Export DEM
+# #################################################################################
+# turn on if we have a licence
+chunk.exportDem(path_export + "/DEM.tif", format="tif")  #   [, projection ][, region ][, dx ][, dy ][, blockw ][, blockh ], nodata=-  (is ok whit licence on windows)
+#    #################################################################################
+
+
+#  Export OrthoPhoto
+# #################################################################################
+# turn on if we have a licence
+
+chunk.exportOrthomosaic(path_export + "/Ortho.tif")  #  , blending=MosaicBlending, color_correction=False) # [, projection
+# #################################################################################
+
+
+#  Export Reppport
+# #################################################################################
+# turn on if we have a licence
+chunk.exportReport(path_export + "/repport.pdf")
+# #################################################################################
+
+# Export point cloud in format Potree
+
+
+##chunk.exportPoints(path_export + "\\CloudPoint.zip", binary=True, precision=6, normals=True, colors=True, source=PhotoScan.PointsSource.DensePoints, comment="hola",
+##format= "potree")
+
+# #################################################################################
+# turn on if we have a licence
+doc.save()
+# #################################################################################
+print ("Script finished at....  ")
+print (datetime.now() - startTime)
+
+print("Script finished")
+
+
+#  PhotoScan.app.addMenuItem("Custom menu/Process 1", main)
